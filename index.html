@@ -30,7 +30,6 @@
             background-color: #f3f4f6;
             -webkit-tap-highlight-color: transparent;
         }
-        /* Hide scrollbar for clean UI but keep functionality */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -54,11 +53,10 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const appId = 'gestione-certificati-donbosco';
         
-        // Le tue chiavi personali di Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyAolrSgri9xiAtiPZw4NauRD49vKKcV7PY",
             authDomain: "gestionaletesseramenti.firebaseapp.com",
@@ -68,7 +66,6 @@
             appId: "1:467663036200:web:36e66651d3d28d3a583a1d"
         };
         
-        // Inizializzazione
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
@@ -77,6 +74,8 @@
             isAuthenticated: false,
             role: null, // 'user' (donbosco) o 'admin'
             filter: 'all',
+            searchQuery: '',
+            athleteToEdit: null,
             athletes: [],
             athleteToDelete: null,
             unsubscribe: null
@@ -125,11 +124,28 @@
         }
 
         function render() {
+            const activeId = document.activeElement ? document.activeElement.id : null;
+            let cursorStart = 0, cursorEnd = 0;
+            if (activeId && document.getElementById(activeId).tagName === 'INPUT') {
+                cursorStart = document.getElementById(activeId).selectionStart;
+                cursorEnd = document.getElementById(activeId).selectionEnd;
+            }
+
             const appDiv = document.getElementById('app');
             if (!state.isAuthenticated) {
                 appDiv.innerHTML = renderLogin();
             } else {
                 appDiv.innerHTML = renderDashboard();
+            }
+
+            if (activeId) {
+                const el = document.getElementById(activeId);
+                if (el) {
+                    el.focus();
+                    if (el.tagName === 'INPUT') {
+                        el.setSelectionRange(cursorStart, cursorEnd);
+                    }
+                }
             }
         }
 
@@ -161,29 +177,34 @@
         function renderDashboard() {
             let stats = { total: 0, warning: 0, urgent: 0, expired: 0 };
             
-            // Ordina per data di scadenza (i più vicini alla scadenza prima)
             const sortedAthletes = [...state.athletes].sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
             
-            // Costruzione lista atleti
-            const athletesHTML = sortedAthletes.map(athlete => {
-                const status = getCertificateStatus(athlete.expiryDate);
-                
-                // Statistiche
+            sortedAthletes.forEach(a => {
+                const s = getCertificateStatus(a.expiryDate);
                 stats.total++;
-                if (status.code === 'warning') stats.warning++;
-                if (status.code === 'urgent') stats.urgent++;
-                if (status.code === 'expired') stats.expired++;
+                if (s.code === 'warning') stats.warning++;
+                if (s.code === 'urgent') stats.urgent++;
+                if (s.code === 'expired') stats.expired++;
+            });
 
-                // Filtro
+            const filteredAthletes = sortedAthletes.filter(athlete => {
+                const status = getCertificateStatus(athlete.expiryDate);
                 if (state.filter !== 'all' && status.code !== state.filter) {
-                    if (state.filter === 'warning' && status.code === 'urgent') {
-                        // Mostra le urgenze anche nel filtro warning
-                    } else {
-                        return '';
+                    if (!(state.filter === 'warning' && status.code === 'urgent')) return false;
+                }
+                if (state.searchQuery) {
+                    const q = state.searchQuery.toLowerCase();
+                    if (!(athlete.name && athlete.name.toLowerCase().includes(q)) && 
+                        !(athlete.parentName && athlete.parentName.toLowerCase().includes(q))) {
+                        return false;
                     }
                 }
-
-                // Genera pulsante WhatsApp (Visibile per Admin se c'è un numero)
+                return true;
+            });
+            
+            const athletesHTML = filteredAthletes.map(athlete => {
+                const status = getCertificateStatus(athlete.expiryDate);
+                
                 let waButton = '';
                 if (state.role === 'admin' && athlete.phone) {
                     waButton = `<button onclick="window.sendWhatsApp('${athlete.phone}', '${athlete.name.replace(/'/g, "\\'")}', ${status.days}, '${status.code}')" class="w-8 h-8 rounded-full bg-green-50 text-green-500 hover:bg-green-500 hover:text-white transition flex items-center justify-center shrink-0 shadow-sm border border-green-200" title="Invia messaggio WhatsApp">
@@ -191,36 +212,65 @@
                     </button>`;
                 }
 
-                // Scheda Atleta
-                return `
-                    <div class="bg-white rounded-xl shadow-sm border-l-4 ${status.colorClass.split(' ')[2]} p-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between hover:shadow-md transition">
-                        <div class="flex-grow w-full sm:w-auto overflow-hidden">
-                            <div class="flex items-center gap-2 mb-1 flex-wrap">
-                                <h3 class="font-bold text-gray-800 text-lg leading-tight truncate">${athlete.name}</h3>
-                                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide whitespace-nowrap ${status.colorClass}">
-                                    <i class="fa-solid ${status.icon} mr-1"></i> ${status.label}
-                                </span>
-                            </div>
-                            <div class="text-xs text-gray-500 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 mt-2">
-                                <div><i class="fa-solid fa-cake-candles w-4 text-center"></i> Nato: <b class="text-gray-700">${formatDate(athlete.dob)}</b></div>
-                                <div class="truncate"><i class="fa-solid fa-user-shield w-4 text-center"></i> Genitore: <b class="text-gray-700">${athlete.parentName || '-'}</b></div>
-                                <div><i class="fa-solid fa-calendar-check w-4 text-center text-blue-400"></i> Emesso: <b class="text-gray-700">${formatDate(athlete.issueDate)}</b></div>
-                                <div><i class="fa-solid fa-calendar-xmark w-4 text-center text-red-400"></i> Scade: <b class="text-gray-700">${formatDate(athlete.expiryDate)}</b></div>
-                                <div><i class="fa-solid fa-phone w-4 text-center"></i> Tel: <b class="text-gray-700">${athlete.phone || '-'}</b></div>
-                                <div class="truncate" title="${athlete.privacyFileName || 'N/D'}"><i class="fa-solid fa-file-pdf w-4 text-center text-red-500"></i> Privacy: <b class="text-gray-700">${athlete.privacyFileName || 'N/D'}</b></div>
-                            </div>
-                        </div>
-                        <div class="flex flex-row sm:flex-col justify-end gap-2 w-full sm:w-auto mt-2 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-gray-100">
-                            ${waButton}
-                            <button onclick="window.promptDelete('${athlete.id}')" class="w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition flex items-center justify-center shrink-0 shadow-sm border border-red-200" title="Elimina atleta">
-                                <i class="fa-solid fa-trash-can"></i>
+                let deleteButton = '';
+                // RESTRIZIONE: Solo l'admin può eliminare i certificati
+                if (state.role === 'admin') {
+                    deleteButton = `<button onclick="window.promptDelete('${athlete.id}')" class="w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition flex items-center justify-center shrink-0 shadow-sm border border-red-200" title="Elimina atleta">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>`;
+                }
+
+                let paymentHTML = '';
+                if (state.role === 'admin') {
+                    if (athlete.isPaid) {
+                        paymentHTML = `<div class="mt-3 p-2 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-sm text-green-700 font-bold w-full">
+                            <i class="fa-solid fa-check-circle"></i> Quota Tesseramento Pagata
+                        </div>`;
+                    } else {
+                        paymentHTML = `<div class="mt-3 p-2 bg-gray-50 border border-gray-200 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 text-sm w-full">
+                            <label class="flex items-center gap-2 cursor-pointer text-gray-700 font-medium">
+                                <input type="checkbox" id="payCheck_${athlete.id}" class="w-4 h-4 text-donbosco-blue rounded border-gray-300 focus:ring-donbosco-blue">
+                                Segna Tesseramento Pagato
+                            </label>
+                            <button onclick="window.savePayment('${athlete.id}')" class="px-4 py-1.5 bg-donbosco-blue text-white rounded-lg text-xs font-bold hover:bg-blue-800 transition shadow-sm w-full sm:w-auto">
+                                <i class="fa-solid fa-save"></i> Salva
                             </button>
+                        </div>`;
+                    }
+                }
+
+                return `
+                    <div class="bg-white rounded-xl shadow-sm border-l-4 ${status.colorClass.split(' ')[2]} p-4 hover:shadow-md transition">
+                        <div class="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+                            <div class="flex-grow w-full sm:w-auto overflow-hidden">
+                                <div class="flex items-center gap-2 mb-1 flex-wrap">
+                                    <h3 class="font-bold text-gray-800 text-lg leading-tight truncate">${athlete.name}</h3>
+                                    <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide whitespace-nowrap ${status.colorClass}">
+                                        <i class="fa-solid ${status.icon} mr-1"></i> ${status.label}
+                                    </span>
+                                </div>
+                                <div class="text-xs text-gray-500 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1 mt-2">
+                                    <div><i class="fa-solid fa-cake-candles w-4 text-center"></i> Nato: <b class="text-gray-700">${formatDate(athlete.dob)}</b></div>
+                                    <div class="truncate"><i class="fa-solid fa-user-shield w-4 text-center"></i> Genitore: <b class="text-gray-700">${athlete.parentName || '-'}</b></div>
+                                    <div><i class="fa-solid fa-calendar-check w-4 text-center text-blue-400"></i> Emesso: <b class="text-gray-700">${formatDate(athlete.issueDate)}</b></div>
+                                    <div><i class="fa-solid fa-calendar-xmark w-4 text-center text-red-400"></i> Scade: <b class="text-gray-700">${formatDate(athlete.expiryDate)}</b></div>
+                                    <div><i class="fa-solid fa-phone w-4 text-center"></i> Tel: <b class="text-gray-700">${athlete.phone || '-'}</b></div>
+                                    <div class="truncate" title="${athlete.privacyFileName || 'N/D'}"><i class="fa-solid fa-file-pdf w-4 text-center text-red-500"></i> Privacy: <b class="text-gray-700">${athlete.privacyFileName || 'N/D'}</b></div>
+                                </div>
+                            </div>
+                            <div class="flex flex-row sm:flex-col justify-end gap-2 w-full sm:w-auto mt-2 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-gray-100 shrink-0">
+                                ${waButton}
+                                <button onclick="window.openEditModal('${athlete.id}')" class="w-8 h-8 rounded-full bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white transition flex items-center justify-center shrink-0 shadow-sm border border-blue-200" title="Modifica e Rinnova Certificato">
+                                    <i class="fa-solid fa-pen"></i>
+                                </button>
+                                ${deleteButton}
+                            </div>
                         </div>
+                        ${paymentHTML}
                     </div>
                 `;
             }).join('');
 
-            // Layout Principale Dashboard
             return `
                 <header class="bg-donbosco-blue text-white shadow-lg shrink-0">
                     <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
@@ -242,7 +292,6 @@
                 <main class="flex-grow overflow-y-auto bg-gray-50 p-4">
                     <div class="max-w-5xl mx-auto space-y-6">
                         
-                        <!-- Barra Statistiche / Filtri -->
                         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div onclick="window.setFilter('all')" class="cursor-pointer bg-white rounded-xl p-3 shadow-sm border-b-4 ${state.filter === 'all' ? 'border-blue-500' : 'border-transparent'} hover:bg-gray-50 transition text-center">
                                 <div class="text-2xl font-bold text-gray-700">${stats.total}</div>
@@ -262,34 +311,33 @@
                             </div>
                         </div>
 
-                        <!-- Intestazione Lista -->
-                        <div class="flex justify-between items-center">
-                            <h2 class="text-lg font-bold text-gray-700">Elenco Atleti</h2>
-                            <button onclick="window.showModal(document.getElementById('addModal'))" class="bg-donbosco-yellow text-donbosco-blue font-bold py-2 px-4 rounded-lg shadow hover:bg-yellow-400 transition flex items-center gap-2">
-                                <i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Nuovo Certificato</span>
+                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                            <div class="relative w-full md:w-1/2">
+                                <i class="fa-solid fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+                                <input type="text" id="searchInput" oninput="window.setSearch(this.value)" value="${state.searchQuery}" placeholder="Cerca per nome atleta o genitore..." class="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-donbosco-blue transition">
+                            </div>
+                            <button onclick="window.openAddModal()" class="w-full md:w-auto bg-donbosco-yellow text-donbosco-blue font-bold py-2.5 px-5 rounded-lg shadow hover:bg-yellow-400 transition flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-plus"></i> <span>Nuovo Certificato</span>
                             </button>
                         </div>
 
-                        <!-- Lista Atleti -->
                         <div class="space-y-3 pb-10">
-                            ${athletesHTML || '<div class="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed border-gray-300"><i class="fa-solid fa-box-open text-4xl mb-3 text-gray-300"></i><p>Nessun certificato in questa lista.</p></div>'}
+                            ${athletesHTML || '<div class="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed border-gray-300"><i class="fa-solid fa-box-open text-4xl mb-3 text-gray-300"></i><p>Nessun certificato trovato.</p></div>'}
                         </div>
                     </div>
                 </main>
 
                 <div id="modalOverlay" class="fixed inset-0 bg-black bg-opacity-60 z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm transition-opacity" onclick="if(event.target === this) { window.hideModal(document.getElementById('addModal')); window.hideModal(document.getElementById('deleteModal')); }">
                     
-                    <!-- Modale Aggiungi -->
                     <div id="addModal" class="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-lg hidden transform transition-all translate-y-full sm:translate-y-0 sm:scale-95 opacity-0 flex flex-col max-h-[95vh] sm:max-h-[90vh]" onclick="event.stopPropagation()">
                         <div class="p-4 sm:p-6 overflow-y-auto flex-grow rounded-t-2xl sm:rounded-2xl">
                             
                             <div class="flex justify-between items-center mb-5 shrink-0 sticky top-0 bg-white z-10 pb-2 border-b border-gray-100">
-                                <h3 class="text-xl font-bold text-donbosco-blue">Nuovo Certificato</h3>
+                                <h3 id="modalTitle" class="text-xl font-bold text-donbosco-blue">Nuovo Certificato</h3>
                                 <button onclick="window.hideModal(document.getElementById('addModal'))" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200 transition"><i class="fa-solid fa-times"></i></button>
                             </div>
                             
                             <form id="addAthleteForm" class="space-y-4" onsubmit="window.submitAddAthlete(event)">
-                                <!-- Info Base -->
                                 <div>
                                     <label class="block text-sm font-semibold text-gray-700 mb-1">Nome e Cognome Atleta *</label>
                                     <input type="text" id="athleteName" required class="w-full px-4 py-2 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-donbosco-blue focus:border-transparent outline-none transition">
@@ -309,7 +357,6 @@
                                     <input type="text" id="parentName" placeholder="Es: Mario Rossi" class="w-full px-4 py-2 bg-gray-50 rounded-lg border border-gray-300 focus:bg-white focus:ring-2 focus:ring-donbosco-blue focus:border-transparent outline-none transition">
                                 </div>
 
-                                <!-- Date Certificato -->
                                 <div class="grid grid-cols-2 gap-4 pt-2">
                                     <div>
                                         <label class="block text-sm font-semibold text-gray-700 mb-1 text-blue-600">Data Emissione *</label>
@@ -321,7 +368,6 @@
                                     </div>
                                 </div>
                                 
-                                <!-- Sezione Privacy e Responsabilità -->
                                 <div class="space-y-4 mt-6 bg-yellow-50/50 p-4 rounded-xl border border-yellow-200">
                                     <h4 class="font-bold text-sm text-gray-800 border-b border-yellow-200 pb-2"><i class="fa-solid fa-shield-halved text-donbosco-yellow mr-1"></i> Privacy e Documentazione</h4>
                                     
@@ -358,7 +404,6 @@
                         </div>
                     </div>
 
-                    <!-- Modale Elimina -->
                     <div id="deleteModal" class="bg-white rounded-2xl shadow-2xl w-full max-w-sm hidden transform transition-all scale-95 opacity-0 p-6 text-center" onclick="event.stopPropagation()">
                         <div class="w-16 h-16 bg-red-100 rounded-full mx-auto flex items-center justify-center mb-4 text-red-500 text-2xl">
                             <i class="fa-solid fa-trash-can"></i>
@@ -399,7 +444,6 @@
                         document.getElementById('loginError').classList.remove('hidden');
                     }
                 } else {
-                    // Fallback Locale
                     state.isAuthenticated = true;
                     state.role = role;
                     render();
@@ -422,7 +466,55 @@
             render();
         };
 
+        window.setSearch = function(searchValue) {
+            state.searchQuery = searchValue;
+            render();
+        };
+
+        window.savePayment = async function(id) {
+            const checkbox = document.getElementById('payCheck_' + id);
+            if (checkbox && checkbox.checked) {
+                if (db && auth && auth.currentUser) {
+                    try {
+                        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'athletes', id), { isPaid: true });
+                    } catch (err) {
+                        console.error("Errore salvataggio pagamento:", err);
+                    }
+                }
+            }
+        };
+
+        window.openAddModal = function() {
+            state.athleteToEdit = null;
+            document.getElementById('modalTitle').innerText = 'Nuovo Certificato';
+            document.getElementById('addAthleteForm').reset();
+            document.getElementById('privacyFile').required = true;
+            window.showModal(document.getElementById('addModal'));
+        };
+
+        window.openEditModal = function(id) {
+            state.athleteToEdit = id;
+            const athlete = state.athletes.find(a => a.id === id);
+            if (!athlete) return;
+            
+            document.getElementById('modalTitle').innerText = 'Modifica Certificato';
+            document.getElementById('athleteName').value = athlete.name;
+            document.getElementById('athleteDob').value = athlete.dob;
+            document.getElementById('athletePhone').value = athlete.phone || '';
+            document.getElementById('parentName').value = athlete.parentName || '';
+            document.getElementById('issueDate').value = athlete.issueDate;
+            document.getElementById('athleteDate').value = athlete.expiryDate;
+            document.getElementById('privacyFlag').checked = athlete.privacyAccepted;
+            document.getElementById('responsibilityFlag').checked = athlete.responsibilityAccepted;
+            
+            document.getElementById('privacyFile').required = false; 
+
+            window.showModal(document.getElementById('addModal'));
+        };
+
         window.promptDelete = function(id) {
+            // Doppia sicurezza: impedisce l'apertura del modale se non si è admin
+            if (state.role !== 'admin') return; 
             state.athleteToDelete = id;
             window.showModal(document.getElementById('deleteModal'));
         };
@@ -431,7 +523,6 @@
             const overlay = document.getElementById('modalOverlay');
             overlay.classList.remove('hidden');
             modalElement.classList.remove('hidden');
-            // Timeout to allow CSS transition to trigger
             setTimeout(() => {
                 modalElement.classList.remove('scale-95', 'translate-y-full', 'opacity-0');
             }, 10);
@@ -446,7 +537,7 @@
                     document.getElementById('deleteModal').classList.contains('hidden')) {
                     overlay.classList.add('hidden');
                 }
-            }, 200); // Matches CSS transition duration
+            }, 200);
         };
 
         window.submitAddAthlete = async function(e) {
@@ -461,7 +552,6 @@
             const responsibility = document.getElementById('responsibilityFlag').checked;
             
             const privacyFileInput = document.getElementById('privacyFile');
-            const privacyFileName = privacyFileInput && privacyFileInput.files.length > 0 ? privacyFileInput.files[0].name : '';
             
             if (name && date && dob && issueDate && privacy && responsibility) {
                 const athleteData = {
@@ -472,27 +562,34 @@
                     expiryDate: date,
                     phone: phone || '',
                     privacyAccepted: privacy,
-                    responsibilityAccepted: responsibility,
-                    privacyFileName: privacyFileName,
-                    createdAt: new Date().toISOString()
+                    responsibilityAccepted: responsibility
                 };
+
+                if (privacyFileInput && privacyFileInput.files.length > 0) {
+                    athleteData.privacyFileName = privacyFileInput.files[0].name;
+                } else if (!state.athleteToEdit) {
+                    athleteData.privacyFileName = ''; 
+                }
 
                 if (db && auth && auth.currentUser) {
                     try {
-                        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'athletes'), athleteData);
+                        if (state.athleteToEdit) {
+                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'athletes', state.athleteToEdit), athleteData);
+                        } else {
+                            athleteData.createdAt = new Date().toISOString();
+                            athleteData.isPaid = false; // Solo all'aggiunta è falso di default
+                            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'athletes'), athleteData);
+                        }
                         window.hideModal(document.getElementById('addModal'));
                     } catch (err) {
                         console.error("Errore salvataggio in Cloud:", err);
                     }
-                } else {
-                    state.athletes.push({ id: Date.now().toString(), ...athleteData });
-                    window.hideModal(document.getElementById('addModal'));
-                    render();
                 }
             }
         };
 
         window.confirmDelete = async function() {
+            if (state.role !== 'admin') return; // Tripla sicurezza blocco eliminazione
             if (state.athleteToDelete) {
                 if (db && auth && auth.currentUser) {
                     try {
@@ -502,11 +599,6 @@
                     } catch (err) {
                         console.error("Errore eliminazione:", err);
                     }
-                } else {
-                    state.athletes = state.athletes.filter(a => a.id !== state.athleteToDelete);
-                    state.athleteToDelete = null;
-                    window.hideModal(document.getElementById('deleteModal'));
-                    render();
                 }
             }
         };
@@ -525,10 +617,9 @@
                 message = `Ciao ${name}, ti contattiamo dalla segreteria sportiva del Borgo Don Bosco per una comunicazione veloce.`;
             }
             
-            // Pulizia del numero 
             let cleanPhone = phone.replace(/[^0-9+]/g, '');
             if (!cleanPhone.startsWith('+39') && !cleanPhone.startsWith('39') && cleanPhone.length >= 9) {
-                cleanPhone = '39' + cleanPhone; // Meglio usare 39 senza il + per i link wa.me
+                cleanPhone = '39' + cleanPhone; 
             } else {
                 cleanPhone = cleanPhone.replace('+', ''); 
             }
@@ -537,7 +628,7 @@
             window.open(url, '_blank'); 
         };
 
-        // Primo avvio
+        // Primo avvio app
         render();
     </script>
 </body>

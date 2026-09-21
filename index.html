@@ -56,15 +56,22 @@
         import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'gestione-certificati-donbosco';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const appId = 'gestione-certificati-donbosco';
         
-        let app, db, auth;
-        if (Object.keys(firebaseConfig).length > 0) {
-            app = initializeApp(firebaseConfig);
-            db = getFirestore(app);
-            auth = getAuth(app);
-        }
+        // Le tue chiavi personali di Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyAolrSgri9xiAtiPZw4NauRD49vKKcV7PY",
+            authDomain: "gestionaletesseramenti.firebaseapp.com",
+            projectId: "gestionaletesseramenti",
+            storageBucket: "gestionaletesseramenti.firebasestorage.app",
+            messagingSenderId: "467663036200",
+            appId: "1:467663036200:web:36e66651d3d28d3a583a1d"
+        };
+        
+        // Inizializzazione
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
 
         const state = {
             isAuthenticated: false,

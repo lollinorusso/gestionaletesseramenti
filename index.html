@@ -177,7 +177,13 @@
         function renderDashboard() {
             let stats = { total: 0, warning: 0, urgent: 0, expired: 0 };
             
-            const sortedAthletes = [...state.athletes].sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
+            // FILTRO PRIVACY: Se è admin vede tutti, se è utente vede SOLO i suoi (quelli con il suo UID).
+            let baseAthletes = state.athletes;
+            if (state.role === 'user' && auth.currentUser) {
+                baseAthletes = state.athletes.filter(a => a.createdBy === auth.currentUser.uid);
+            }
+
+            const sortedAthletes = [...baseAthletes].sort((a, b) => new Date(a.expiryDate) - new Date(b.expiryDate));
             
             sortedAthletes.forEach(a => {
                 const s = getCertificateStatus(a.expiryDate);
@@ -271,15 +277,20 @@
                 `;
             }).join('');
 
+            let noCertMessage = '<p>Nessun certificato trovato con questa ricerca.</p>';
+            if (state.role === 'user' && stats.total === 0) {
+                noCertMessage = '<p class="text-gray-600 font-medium">Non hai ancora inserito nessun certificato.<br>Clicca su "Nuovo Certificato" per iniziare.</p>';
+            }
+
             return `
                 <header class="bg-donbosco-blue text-white shadow-lg shrink-0">
                     <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
                         <div class="flex items-center gap-3">
                             <i class="fa-solid fa-notes-medical text-donbosco-yellow text-2xl"></i>
                             <div>
-                                <h1 class="text-lg sm:text-xl font-bold leading-tight truncate max-w-[200px] sm:max-w-md">Gestione Certificati</h1>
+                                <h1 class="text-lg sm:text-xl font-bold leading-tight truncate max-w-[200px] sm:max-w-md">${state.role === 'admin' ? 'Tutti i Certificati' : 'I Tuoi Certificati'}</h1>
                                 <span class="text-xs text-blue-200 font-medium">
-                                    ${state.role === 'admin' ? '<i class="fa-solid fa-shield-halved mr-1"></i> Accesso Admin' : '<i class="fa-solid fa-user mr-1"></i> Accesso Operatore'}
+                                    ${state.role === 'admin' ? '<i class="fa-solid fa-shield-halved mr-1"></i> Accesso Admin' : '<i class="fa-solid fa-user mr-1"></i> Area Personale'}
                                 </span>
                             </div>
                         </div>
@@ -322,7 +333,7 @@
                         </div>
 
                         <div class="space-y-3 pb-10">
-                            ${athletesHTML || '<div class="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed border-gray-300"><i class="fa-solid fa-box-open text-4xl mb-3 text-gray-300"></i><p>Nessun certificato trovato.</p></div>'}
+                            ${athletesHTML || `<div class="text-center py-12 text-gray-400 bg-white rounded-xl border border-dashed border-gray-300"><i class="fa-solid fa-box-open text-4xl mb-3 text-gray-300"></i>${noCertMessage}</div>`}
                         </div>
                     </div>
                 </main>
@@ -472,6 +483,7 @@
         };
 
         window.savePayment = async function(id) {
+            if (state.role !== 'admin') return; 
             const checkbox = document.getElementById('payCheck_' + id);
             if (checkbox && checkbox.checked) {
                 if (db && auth && auth.currentUser) {
@@ -513,7 +525,6 @@
         };
 
         window.promptDelete = function(id) {
-            // Doppia sicurezza: impedisce l'apertura del modale se non si è admin
             if (state.role !== 'admin') return; 
             state.athleteToDelete = id;
             window.showModal(document.getElementById('deleteModal'));
@@ -554,6 +565,7 @@
             const privacyFileInput = document.getElementById('privacyFile');
             
             if (name && date && dob && issueDate && privacy && responsibility) {
+                // AGGIUNTA PRIVACY: Salviamo anche l'ID di chi sta creando il certificato (auth.currentUser.uid)
                 const athleteData = {
                     name: name,
                     dob: dob,
@@ -562,7 +574,8 @@
                     expiryDate: date,
                     phone: phone || '',
                     privacyAccepted: privacy,
-                    responsibilityAccepted: responsibility
+                    responsibilityAccepted: responsibility,
+                    createdBy: auth.currentUser ? auth.currentUser.uid : 'sconosciuto'
                 };
 
                 if (privacyFileInput && privacyFileInput.files.length > 0) {
@@ -574,10 +587,13 @@
                 if (db && auth && auth.currentUser) {
                     try {
                         if (state.athleteToEdit) {
-                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'athletes', state.athleteToEdit), athleteData);
+                            // Se stiamo modificando, non sovrascriviamo l'autore originale né il pagamento
+                            const updateData = { ...athleteData };
+                            delete updateData.createdBy; 
+                            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'athletes', state.athleteToEdit), updateData);
                         } else {
                             athleteData.createdAt = new Date().toISOString();
-                            athleteData.isPaid = false; // Solo all'aggiunta è falso di default
+                            athleteData.isPaid = false; 
                             await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'athletes'), athleteData);
                         }
                         window.hideModal(document.getElementById('addModal'));
@@ -589,7 +605,7 @@
         };
 
         window.confirmDelete = async function() {
-            if (state.role !== 'admin') return; // Tripla sicurezza blocco eliminazione
+            if (state.role !== 'admin') return; 
             if (state.athleteToDelete) {
                 if (db && auth && auth.currentUser) {
                     try {

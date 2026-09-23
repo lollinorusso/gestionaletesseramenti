@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Gestione Certificati Medici</title>
+    <title>Gestionale Borgo Don Bosco</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -52,10 +52,11 @@
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const appId = 'gestione-certificati-donbosco';
+        const logoUrl = 'https://upload.wikimedia.org/wikipedia/commons/7/77/Borgodonboscoasti.jpg';
         
         const firebaseConfig = {
             apiKey: "AIzaSyAolrSgri9xiAtiPZw4NauRD49vKKcV7PY",
@@ -72,18 +73,39 @@
 
         const state = {
             isAuthenticated: false,
-            role: null, // 'user' (donbosco) o 'admin'
+            role: null, // 'user' o 'admin'
+            authMode: 'login', // 'login', 'register', 'forgot'
+            authMessage: { text: '', type: '' },
             filter: 'all',
             searchQuery: '',
             athleteToEdit: null,
             athletes: [],
             athleteToDelete: null,
-            unsubscribe: null
+            unsubscribe: null,
+            isInitialLoad: true
         };
+
+        // Gestione automatica della sessione
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                state.isAuthenticated = true;
+                // La mail della segreteria diventa admin in automatico
+                state.role = (user.email === 'segreteria@borgodonbosco.com') ? 'admin' : 'user';
+                state.isInitialLoad = false;
+                loadDataFromCloud();
+            } else {
+                state.isAuthenticated = false;
+                state.role = null;
+                state.isInitialLoad = false;
+                render();
+            }
+        });
 
         function loadDataFromCloud() {
             if (!auth || !auth.currentUser) return;
             const athletesRef = collection(db, 'artifacts', appId, 'public', 'data', 'athletes');
+            
+            if (state.unsubscribe) state.unsubscribe();
             
             state.unsubscribe = onSnapshot(athletesRef, (snapshot) => {
                 state.athletes = snapshot.docs.map(doc => ({
@@ -124,6 +146,8 @@
         }
 
         function render() {
+            if (state.isInitialLoad) return; // Aspetta che Firebase verifichi la sessione
+
             const activeId = document.activeElement ? document.activeElement.id : null;
             let cursorStart = 0, cursorEnd = 0;
             if (activeId && document.getElementById(activeId).tagName === 'INPUT') {
@@ -150,34 +174,149 @@
         }
 
         function renderLogin() {
+            let formTitle = "Accedi";
+            let submitBtn = "Accedi";
+            let switchText = "Non hai un account? Registrati";
+            let switchMode = "register";
+            let formAction = "window.handleLogin(event)";
+            
+            if (state.authMode === 'register') {
+                formTitle = "Nuova Registrazione";
+                submitBtn = "Crea Account";
+                switchText = "Hai già un account? Accedi";
+                switchMode = "login";
+                formAction = "window.handleRegister(event)";
+            } else if (state.authMode === 'forgot') {
+                formTitle = "Recupera Password";
+                submitBtn = "Invia Link di Recupero";
+                switchText = "Torna al Login";
+                switchMode = "login";
+                formAction = "window.handleResetPassword(event)";
+            }
+
+            let msgHtml = '';
+            if (state.authMessage.text) {
+                const color = state.authMessage.type === 'error' ? 'text-red-600 bg-red-50 border-red-200' : 'text-green-600 bg-green-50 border-green-200';
+                msgHtml = `<div class="mb-4 p-3 rounded-lg border text-sm ${color}">${state.authMessage.text}</div>`;
+            }
+
+            let passwordField = '';
+            if (state.authMode !== 'forgot') {
+                passwordField = `
+                    <div class="mb-4">
+                        <input type="password" id="authPassword" placeholder="Password" required minlength="6"
+                            class="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-donbosco-yellow focus:border-transparent transition text-lg">
+                    </div>
+                `;
+            }
+
+            let forgotLink = '';
+            if (state.authMode === 'login') {
+                forgotLink = `
+                    <div class="text-right mt-1 mb-4">
+                        <a href="#" onclick="window.setAuthMode('forgot')" class="text-sm text-donbosco-blue hover:underline">Password dimenticata?</a>
+                    </div>
+                `;
+            }
+
             return `
                 <div class="flex-grow flex items-center justify-center bg-donbosco-blue p-4 fade-in">
                     <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md text-center">
-                        <div class="w-20 h-20 bg-donbosco-yellow rounded-full mx-auto flex items-center justify-center mb-6 shadow-lg">
-                            <i class="fa-solid fa-file-medical text-donbosco-blue text-4xl"></i>
+                        <div class="w-24 h-24 bg-white border-4 border-donbosco-yellow rounded-full mx-auto flex items-center justify-center mb-4 shadow-lg overflow-hidden">
+                            <img src="${logoUrl}" alt="Logo Borgo Don Bosco" class="w-full h-full object-contain p-1">
                         </div>
-                        <h1 class="text-2xl font-bold text-donbosco-blue mb-2">Gestione Certificati</h1>
-                        <p class="text-gray-500 mb-8 text-sm">Inserisci la password di accesso.</p>
+                        <h1 class="text-2xl font-bold text-donbosco-blue mb-1">Gestionale Borgo Don Bosco</h1>
+                        <h2 class="text-gray-500 mb-6 text-lg">${formTitle}</h2>
                         
-                        <form id="loginForm" class="space-y-4" onsubmit="window.login(event)">
-                            <div>
-                                <input type="password" id="passwordInput" placeholder="Password" 
-                                    class="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-donbosco-yellow focus:border-transparent transition text-center text-lg" required>
-                                <p id="loginError" class="text-red-500 text-sm mt-2 hidden">Password errata. Riprova.</p>
+                        ${msgHtml}
+                        
+                        <form class="text-left" onsubmit="${formAction}">
+                            <div class="mb-4">
+                                <input type="email" id="authEmail" placeholder="Indirizzo Email" required 
+                                    class="w-full px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-donbosco-yellow focus:border-transparent transition text-lg">
                             </div>
-                            <button type="submit" class="w-full bg-donbosco-yellow text-donbosco-blue font-bold py-3 px-4 rounded-xl shadow-md hover:bg-yellow-400 transition transform hover:-translate-y-0.5">
-                                Accedi <i class="fa-solid fa-arrow-right ml-2"></i>
+                            ${passwordField}
+                            ${forgotLink}
+                            
+                            <button type="submit" class="w-full bg-donbosco-yellow text-donbosco-blue font-bold py-3 px-4 rounded-xl shadow-md hover:bg-yellow-400 transition transform hover:-translate-y-0.5 mt-2">
+                                ${submitBtn}
                             </button>
                         </form>
+                        
+                        <div class="mt-6 pt-4 border-t border-gray-100">
+                            <a href="#" onclick="window.setAuthMode('${switchMode}')" class="text-gray-500 font-medium hover:text-donbosco-blue transition">
+                                ${switchText}
+                            </a>
+                        </div>
                     </div>
                 </div>
             `;
         }
 
+        window.setAuthMode = function(mode) {
+            state.authMode = mode;
+            state.authMessage = { text: '', type: '' };
+            render();
+        }
+
+        window.handleLogin = async function(e) {
+            e.preventDefault();
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPassword').value;
+            
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                // Il render avverrà automaticamente tramite onAuthStateChanged
+            } catch(err) {
+                console.error(err);
+                state.authMessage = { text: 'Email o password errati. Riprova.', type: 'error' };
+                render();
+            }
+        };
+
+        window.handleRegister = async function(e) {
+            e.preventDefault();
+            const email = document.getElementById('authEmail').value;
+            const password = document.getElementById('authPassword').value;
+            
+            try {
+                await createUserWithEmailAndPassword(auth, email, password);
+                // Il render avverrà automaticamente tramite onAuthStateChanged
+            } catch(err) {
+                console.error(err);
+                let msg = 'Errore durante la registrazione.';
+                if(err.code === 'auth/email-already-in-use') msg = 'Questa email è già registrata. Effettua il Login.';
+                if(err.code === 'auth/weak-password') msg = 'La password deve essere di almeno 6 caratteri.';
+                state.authMessage = { text: msg, type: 'error' };
+                render();
+            }
+        };
+
+        window.handleResetPassword = async function(e) {
+            e.preventDefault();
+            const email = document.getElementById('authEmail').value;
+            try {
+                await sendPasswordResetEmail(auth, email);
+                state.authMessage = { text: 'Email inviata! Controlla la tua casella di posta per reimpostare la password.', type: 'success' };
+                render();
+            } catch(err) {
+                state.authMessage = { text: 'Se l\'email è registrata, riceverai un link di recupero a breve.', type: 'success' };
+                render();
+            }
+        };
+
+        window.logout = async function() {
+            try {
+                await signOut(auth);
+            } catch(err) {
+                console.error(err);
+            }
+        };
+
         function renderDashboard() {
             let stats = { total: 0, warning: 0, urgent: 0, expired: 0 };
             
-            // FILTRO PRIVACY: Se è admin vede tutti, se è utente vede SOLO i suoi (quelli con il suo UID).
+            // FILTRO PRIVACY: Se è admin vede tutti, se è utente vede SOLO i suoi.
             let baseAthletes = state.athletes;
             if (state.role === 'user' && auth.currentUser) {
                 baseAthletes = state.athletes.filter(a => a.createdBy === auth.currentUser.uid);
@@ -219,7 +358,6 @@
                 }
 
                 let deleteButton = '';
-                // RESTRIZIONE: Solo l'admin può eliminare i certificati
                 if (state.role === 'admin') {
                     deleteButton = `<button onclick="window.promptDelete('${athlete.id}')" class="w-8 h-8 rounded-full bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition flex items-center justify-center shrink-0 shadow-sm border border-red-200" title="Elimina atleta">
                         <i class="fa-solid fa-trash-can"></i>
@@ -264,9 +402,9 @@
                                     <div class="truncate" title="${athlete.privacyFileName || 'N/D'}"><i class="fa-solid fa-file-pdf w-4 text-center text-red-500"></i> Privacy: <b class="text-gray-700">${athlete.privacyFileName || 'N/D'}</b></div>
                                 </div>
                             </div>
-                            <div class="flex flex-row sm:flex-col justify-end gap-2 w-full sm:w-auto mt-2 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-gray-100 shrink-0">
+                            <div class="flex flex-row justify-end gap-2 w-full sm:w-auto mt-2 sm:mt-0 pt-3 sm:pt-0 border-t sm:border-t-0 border-gray-100 shrink-0">
                                 ${waButton}
-                                <button onclick="window.openEditModal('${athlete.id}')" class="w-8 h-8 rounded-full bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white transition flex items-center justify-center shrink-0 shadow-sm border border-blue-200" title="Modifica e Rinnova Certificato">
+                                <button onclick="window.openEditModal('${athlete.id}')" class="w-8 h-8 rounded-full bg-blue-50 text-blue-500 hover:bg-blue-500 hover:text-white transition flex items-center justify-center shrink-0 shadow-sm border border-blue-200" title="Modifica / Rinnova Certificato">
                                     <i class="fa-solid fa-pen"></i>
                                 </button>
                                 ${deleteButton}
@@ -286,15 +424,17 @@
                 <header class="bg-donbosco-blue text-white shadow-lg shrink-0">
                     <div class="max-w-5xl mx-auto px-4 py-4 flex justify-between items-center">
                         <div class="flex items-center gap-3">
-                            <i class="fa-solid fa-notes-medical text-donbosco-yellow text-2xl"></i>
+                            <div class="w-12 h-12 bg-white rounded-full border-2 border-donbosco-yellow flex items-center justify-center shrink-0 overflow-hidden shadow-sm">
+                                <img src="${logoUrl}" alt="Logo Borgo Don Bosco" class="w-full h-full object-contain p-0.5">
+                            </div>
                             <div>
-                                <h1 class="text-lg sm:text-xl font-bold leading-tight truncate max-w-[200px] sm:max-w-md">${state.role === 'admin' ? 'Tutti i Certificati' : 'I Tuoi Certificati'}</h1>
-                                <span class="text-xs text-blue-200 font-medium">
-                                    ${state.role === 'admin' ? '<i class="fa-solid fa-shield-halved mr-1"></i> Accesso Admin' : '<i class="fa-solid fa-user mr-1"></i> Area Personale'}
+                                <h1 class="text-lg sm:text-xl font-bold leading-tight truncate max-w-[200px] sm:max-w-md">Gestionale Borgo Don Bosco</h1>
+                                <span class="text-xs text-blue-200 font-medium block truncate max-w-[200px]">
+                                    ${state.role === 'admin' ? '<i class="fa-solid fa-shield-halved mr-1"></i> Admin:' : '<i class="fa-solid fa-user mr-1"></i> Utente:'} ${auth.currentUser.email}
                                 </span>
                             </div>
                         </div>
-                        <button onclick="window.logout()" class="text-sm bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition shrink-0">
+                        <button onclick="window.logout()" class="text-sm bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition shrink-0 border border-white/20">
                             <i class="fa-solid fa-sign-out-alt"></i> <span class="hidden sm:inline ml-1">Esci</span>
                         </button>
                     </div>
@@ -325,7 +465,7 @@
                         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
                             <div class="relative w-full md:w-1/2">
                                 <i class="fa-solid fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
-                                <input type="text" id="searchInput" oninput="window.setSearch(this.value)" value="${state.searchQuery}" placeholder="Cerca per nome atleta o genitore..." class="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-donbosco-blue transition">
+                                <input type="text" id="searchInput" oninput="window.setSearch(this.value)" value="${state.searchQuery}" placeholder="Cerca nome atleta o genitore..." class="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-50 border border-gray-200 focus:bg-white focus:outline-none focus:ring-2 focus:ring-donbosco-blue transition">
                             </div>
                             <button onclick="window.openAddModal()" class="w-full md:w-auto bg-donbosco-yellow text-donbosco-blue font-bold py-2.5 px-5 rounded-lg shadow hover:bg-yellow-400 transition flex items-center justify-center gap-2">
                                 <i class="fa-solid fa-plus"></i> <span>Nuovo Certificato</span>
@@ -430,48 +570,6 @@
             `;
         }
 
-        window.login = async function(e) {
-            e.preventDefault();
-            const pwd = document.getElementById('passwordInput').value;
-            
-            let role = null;
-            if (pwd === 'admin') role = 'admin';
-            else if (pwd === 'donbosco') role = 'user';
-
-            if (role) {
-                if (auth) {
-                    try {
-                        if (typeof __initial_auth_token !== 'undefined') {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-                        state.isAuthenticated = true;
-                        state.role = role;
-                        loadDataFromCloud();
-                        render();
-                    } catch(err) {
-                        console.error("Auth error", err);
-                        document.getElementById('loginError').classList.remove('hidden');
-                    }
-                } else {
-                    state.isAuthenticated = true;
-                    state.role = role;
-                    render();
-                }
-            } else {
-                document.getElementById('loginError').classList.remove('hidden');
-                document.getElementById('passwordInput').classList.add('border-red-500', 'bg-red-50');
-            }
-        };
-
-        window.logout = function() {
-            state.isAuthenticated = false;
-            state.role = null;
-            if (state.unsubscribe) state.unsubscribe();
-            render();
-        };
-
         window.setFilter = function(filterValue) {
             state.filter = filterValue;
             render();
@@ -509,7 +607,7 @@
             const athlete = state.athletes.find(a => a.id === id);
             if (!athlete) return;
             
-            document.getElementById('modalTitle').innerText = 'Modifica Certificato';
+            document.getElementById('modalTitle').innerText = 'Modifica / Rinnova Certificato';
             document.getElementById('athleteName').value = athlete.name;
             document.getElementById('athleteDob').value = athlete.dob;
             document.getElementById('athletePhone').value = athlete.phone || '';
@@ -565,7 +663,6 @@
             const privacyFileInput = document.getElementById('privacyFile');
             
             if (name && date && dob && issueDate && privacy && responsibility) {
-                // AGGIUNTA PRIVACY: Salviamo anche l'ID di chi sta creando il certificato (auth.currentUser.uid)
                 const athleteData = {
                     name: name,
                     dob: dob,
@@ -587,7 +684,6 @@
                 if (db && auth && auth.currentUser) {
                     try {
                         if (state.athleteToEdit) {
-                            // Se stiamo modificando, non sovrascriviamo l'autore originale né il pagamento
                             const updateData = { ...athleteData };
                             delete updateData.createdBy; 
                             await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'athletes', state.athleteToEdit), updateData);
@@ -644,7 +740,6 @@
             window.open(url, '_blank'); 
         };
 
-        // Primo avvio app
         render();
     </script>
 </body>
